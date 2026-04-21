@@ -189,7 +189,7 @@ export default async function handler(req, res) {
     if (!content || !content.trim()) {
       return res.status(400).json({
         error:
-          "We could not extract usable text from that file. Please try a text-based PDF, DOCX, TXT, or paste the document text.",
+          "We could not extract usable text from that file. Please try a text-based PDF, DOCX, or TXT file.",
       });
     }
 
