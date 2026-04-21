@@ -1,6 +1,4 @@
 import OpenAI from "openai";
-import pdf from "pdf-parse";
-import mammoth from "mammoth";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -78,24 +76,14 @@ Return ONLY a valid JSON object with this exact schema:
   "summary": "<2-3 sentence plain language summary>"
 }`;
 
-async function readJsonBody(req) {
-  const chunks = [];
-  for await (const chunk of req) {
-    chunks.push(chunk);
-  }
-  const raw = Buffer.concat(chunks).toString("utf8");
-  return raw ? JSON.parse(raw) : {};
-}
-
 function parseMultipart(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
 
     req.on("data", (chunk) => chunks.push(chunk));
-
     req.on("end", () => {
       try {
-        const buffer = Buffer.concat(chunks);
+        const bodyBuffer = Buffer.concat(chunks);
         const contentType = req.headers["content-type"] || "";
         const boundaryMatch = contentType.match(/boundary=(.+)$/);
 
@@ -104,36 +92,37 @@ function parseMultipart(req) {
         }
 
         const boundary = `--${boundaryMatch[1]}`;
-        const parts = buffer
-          .toString("binary")
-          .split(boundary)
-          .filter((p) => p.trim() && p.trim() !== "--");
+        const raw = bodyBuffer.toString("latin1");
+        const parts = raw.split(boundary).filter((part) => {
+          const trimmed = part.trim();
+          return trimmed && trimmed !== "--";
+        });
 
-        const fields = {};
         let file = null;
+        let checkboxes = {};
 
         for (const part of parts) {
-          const [rawHeaders, rawBody] = part.split("\r\n\r\n");
-          if (!rawHeaders || !rawBody) continue;
+          const [headerBlock, bodyBlock] = part.split("\r\n\r\n");
+          if (!headerBlock || !bodyBlock) continue;
 
-          const nameMatch = rawHeaders.match(/name="([^"]+)"/);
-          const filenameMatch = rawHeaders.match(/filename="([^"]+)"/);
-          const contentTypeMatch = rawHeaders.match(/Content-Type:\s([^\r\n]+)/i);
+          const nameMatch = headerBlock.match(/name="([^"]+)"/);
+          const filenameMatch = headerBlock.match(/filename="([^"]+)"/);
 
-          const bodyBinary = rawBody.replace(/\r\n--$/, "").replace(/\r\n$/, "");
+          let cleanedBody = bodyBlock;
+          if (cleanedBody.endsWith("\r\n")) cleanedBody = cleanedBody.slice(0, -2);
+          if (cleanedBody.endsWith("--")) cleanedBody = cleanedBody.slice(0, -2);
 
           if (filenameMatch) {
             file = {
               filename: filenameMatch[1],
-              contentType: contentTypeMatch ? contentTypeMatch[1] : "application/octet-stream",
-              buffer: Buffer.from(bodyBinary, "binary"),
+              content: Buffer.from(cleanedBody, "latin1").toString("utf8"),
             };
-          } else if (nameMatch) {
-            fields[nameMatch[1]] = Buffer.from(bodyBinary, "binary").toString("utf8");
+          } else if (nameMatch && nameMatch[1] === "checkboxes") {
+            checkboxes = JSON.parse(Buffer.from(cleanedBody, "latin1").toString("utf8"));
           }
         }
 
-        resolve({ fields, file });
+        resolve({ file, checkboxes });
       } catch (error) {
         reject(error);
       }
@@ -143,53 +132,35 @@ function parseMultipart(req) {
   });
 }
 
-async function extractTextFromFile(file) {
-  if (!file) return "";
-
-  const name = file.filename.toLowerCase();
-
-  if (name.endsWith(".txt")) {
-    return file.buffer.toString("utf8");
-  }
-
-  if (name.endsWith(".pdf")) {
-    const parsed = await pdf(file.buffer);
-    return parsed.text || "";
-  }
-
-  if (name.endsWith(".docx")) {
-    const result = await mammoth.extractRawText({ buffer: file.buffer });
-    return result.value || "";
-  }
-
-  throw new Error("Unsupported file type. Please upload a PDF, DOCX, or TXT file.");
-}
-
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed." });
   }
 
   try {
-    let content = "";
-    let checkboxes = {};
-
     const contentType = req.headers["content-type"] || "";
 
-    if (contentType.includes("multipart/form-data")) {
-      const { fields, file } = await parseMultipart(req);
-      content = await extractTextFromFile(file);
-      checkboxes = fields.checkboxes ? JSON.parse(fields.checkboxes) : {};
-    } else {
-      const body = await readJsonBody(req);
-      content = body.content || "";
-      checkboxes = body.checkboxes || {};
+    if (!contentType.includes("multipart/form-data")) {
+      return res.status(400).json({ error: "Expected a file upload." });
     }
 
-    if (!content || !content.trim()) {
+    const { file, checkboxes } = await parseMultipart(req);
+
+    if (!file) {
+      return res.status(400).json({ error: "No file was uploaded." });
+    }
+
+    if (!file.filename.toLowerCase().endsWith(".txt")) {
       return res.status(400).json({
-        error:
-          "We could not extract usable text from that file. Please try a text-based PDF, DOCX, or TXT file.",
+        error: "Please upload a .txt file for this version.",
+      });
+    }
+
+    const content = file.content?.trim();
+
+    if (!content) {
+      return res.status(400).json({
+        error: "The uploaded file appears to be empty.",
       });
     }
 
@@ -210,14 +181,8 @@ Return only the JSON object as specified.`;
     const response = await openai.responses.create({
       model: process.env.OPENAI_MODEL || "gpt-4.1",
       input: [
-        {
-          role: "system",
-          content: SYSTEM_PROMPT,
-        },
-        {
-          role: "user",
-          content: userMessage,
-        },
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userMessage },
       ],
     });
 
