@@ -59,6 +59,7 @@ function StatusBadge({ status }) {
     fail: { bg: "rgba(239,68,68,0.15)", color: "#ef4444", label: "Fail", icon: "✗" },
   };
   const s = map[status] || map.fail;
+
   return (
     <span
       style={{
@@ -158,8 +159,6 @@ function RequirementRow({ req }) {
 
 export default function App() {
   const [file, setFile] = useState(null);
-  const [pastedText, setPastedText] = useState("");
-  const [inputMode, setInputMode] = useState("upload");
   const [checkboxes, setCheckboxes] = useState({
     boardApproved: false,
     publiclyPosted: false,
@@ -167,11 +166,11 @@ export default function App() {
   });
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState("");
   const [dragOver, setDragOver] = useState(false);
-  const fileInputRef = useRef();
+  const fileInputRef = useRef(null);
 
-  const handleFile = async (f) => {
+  const handleFile = (f) => {
     if (!f) return;
     setFile(f);
   };
@@ -183,55 +182,38 @@ export default function App() {
     if (f) handleFile(f);
   }, []);
 
-  const analyze = async () => {
-    if (inputMode === "upload" && !file) {
+  async function analyze() {
+    if (!file) {
       setError("Please upload a file before analyzing.");
-      return;
-    }
-    if (inputMode === "paste" && !pastedText.trim()) {
-      setError("Please paste document text before analyzing.");
       return;
     }
 
     setLoading(true);
-    setError(null);
+    setError("");
     setResult(null);
 
     try {
-      let response;
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("checkboxes", JSON.stringify(checkboxes));
 
-      if (inputMode === "upload") {
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("checkboxes", JSON.stringify(checkboxes));
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        body: formData,
+      });
 
-        response = await fetch("/api/analyze", {
-          method: "POST",
-          body: formData,
-        });
-      } else {
-        response = await fetch("/api/analyze", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            content: pastedText,
-            checkboxes,
-          }),
-        });
+      const raw = await response.text();
+
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        throw new Error(raw || "The server returned an invalid response.");
       }
 
-  const raw = await response.text();
-let data;
-
-try {
-  data = JSON.parse(raw);
-} catch {
-  throw new Error(raw || "The server returned an invalid response.");
-}
-
-if (!response.ok) {
-  throw new Error(data.error || "Analysis failed.");
-}
+      if (!response.ok) {
+        throw new Error(data.error || "Analysis failed.");
+      }
 
       setResult(data);
     } catch (err) {
@@ -239,19 +221,18 @@ if (!response.ok) {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const reset = () => {
+  function reset() {
     setFile(null);
-    setPastedText("");
     setResult(null);
-    setError(null);
+    setError("");
     setCheckboxes({
       boardApproved: false,
       publiclyPosted: false,
       includesStipends: false,
     });
-  };
+  }
 
   const statusColor = result
     ? result.status === "Strong"
@@ -309,99 +290,50 @@ if (!response.ok) {
               padding: "36px",
             }}
           >
-            <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
-              {["upload", "paste"].map((mode) => (
-                <button
-                  key={mode}
-                  onClick={() => setInputMode(mode)}
-                  style={{
-                    padding: "8px 20px",
-                    borderRadius: 8,
-                    border: "none",
-                    cursor: "pointer",
-                    fontFamily: "sans-serif",
-                    fontSize: 13,
-                    fontWeight: 600,
-                    background:
-                      inputMode === mode
-                        ? `linear-gradient(135deg, ${CHARTER_ORANGE}, #9B2335)`
-                        : "rgba(255,255,255,0.08)",
-                    color: "#fff",
-                  }}
-                >
-                  {mode === "upload" ? "Upload File" : "Paste Text"}
-                </button>
-              ))}
-            </div>
-
-            {inputMode === "upload" ? (
-              <div
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDragOver(true);
-                }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-                style={{
-                  border: `2px dashed ${dragOver ? CHARTER_ORANGE : "rgba(255,255,255,0.2)"}`,
-                  borderRadius: 14,
-                  padding: "40px 24px",
-                  textAlign: "center",
-                  cursor: "pointer",
-                  background: dragOver ? "rgba(244,123,32,0.05)" : "transparent",
-                  marginBottom: 24,
-                }}
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".pdf,.docx,.txt"
-                  style={{ display: "none" }}
-                  onChange={(e) => handleFile(e.target.files?.[0])}
-                />
-                <div style={{ fontSize: 36, marginBottom: 10 }}>{file ? "✅" : "📄"}</div>
-                {file ? (
-                  <>
-                    <div style={{ color: "#fff", fontFamily: "sans-serif", fontSize: 15, fontWeight: 600 }}>{file.name}</div>
-                    <div style={{ color: "rgba(255,255,255,0.4)", fontFamily: "sans-serif", fontSize: 12, marginTop: 4 }}>
-                      {(file.size / 1024).toFixed(1)} KB
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div style={{ color: "rgba(255,255,255,0.7)", fontFamily: "sans-serif", fontSize: 15, marginBottom: 4 }}>
-                      Drop your file here, or click to browse
-                    </div>
-                    <div style={{ color: "rgba(255,255,255,0.35)", fontFamily: "sans-serif", fontSize: 12 }}>
-                      PDF, DOCX, or TXT
-                    </div>
-                  </>
-                )}
-              </div>
-            ) : (
-              <textarea
-                value={pastedText}
-                onChange={(e) => setPastedText(e.target.value)}
-                placeholder="Paste the full text of your pay schedule or compensation document here..."
-                style={{
-                  width: "100%",
-                  minHeight: 180,
-                  background: "rgba(255,255,255,0.06)",
-                  border: "1px solid rgba(255,255,255,0.15)",
-                  borderRadius: 12,
-                  color: "#fff",
-                  padding: "16px",
-                  fontFamily: "sans-serif",
-                  fontSize: 14,
-                  lineHeight: 1.6,
-                  resize: "vertical",
-                  outline: "none",
-                  marginBottom: 24,
-                  boxSizing: "border-box",
-                }}
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                border: `2px dashed ${dragOver ? CHARTER_ORANGE : "rgba(255,255,255,0.2)"}`,
+                borderRadius: 14,
+                padding: "40px 24px",
+                textAlign: "center",
+                cursor: "pointer",
+                background: dragOver ? "rgba(244,123,32,0.05)" : "transparent",
+                marginBottom: 24,
+              }}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.docx,.txt"
+                style={{ display: "none" }}
+                onChange={(e) => handleFile(e.target.files?.[0])}
               />
-            )}
+              <div style={{ fontSize: 36, marginBottom: 10 }}>{file ? "✅" : "📄"}</div>
+              {file ? (
+                <>
+                  <div style={{ color: "#fff", fontFamily: "sans-serif", fontSize: 15, fontWeight: 600 }}>{file.name}</div>
+                  <div style={{ color: "rgba(255,255,255,0.4)", fontFamily: "sans-serif", fontSize: 12, marginTop: 4 }}>
+                    {(file.size / 1024).toFixed(1)} KB
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ color: "rgba(255,255,255,0.7)", fontFamily: "sans-serif", fontSize: 15, marginBottom: 4 }}>
+                    Drop your file here, or click to browse
+                  </div>
+                  <div style={{ color: "rgba(255,255,255,0.35)", fontFamily: "sans-serif", fontSize: 12 }}>
+                    PDF, DOCX, or TXT
+                  </div>
+                </>
+              )}
+            </div>
 
             <div
               style={{
@@ -462,7 +394,7 @@ if (!response.ok) {
 
             <button
               onClick={analyze}
-              disabled={loading || (inputMode === "upload" ? !file : !pastedText.trim())}
+              disabled={loading || !file}
               style={{
                 width: "100%",
                 padding: "16px",
@@ -474,7 +406,7 @@ if (!response.ok) {
                 fontWeight: 700,
                 fontFamily: "sans-serif",
                 cursor: loading ? "not-allowed" : "pointer",
-                opacity: loading || (inputMode === "upload" ? !file : !pastedText.trim()) ? 0.5 : 1,
+                opacity: loading || !file ? 0.5 : 1,
               }}
             >
               {loading ? "Analyzing document..." : "Analyze Document"}
