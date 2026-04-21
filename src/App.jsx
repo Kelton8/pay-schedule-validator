@@ -220,11 +220,18 @@ export default function App() {
         });
       }
 
-      const data = await response.json();
+  const raw = await response.text();
+let data;
 
-      if (!response.ok) {
-        throw new Error(data.error || "Analysis failed.");
-      }
+try {
+  data = JSON.parse(raw);
+} catch {
+  throw new Error(raw || "The server returned an invalid response.");
+}
+
+if (!response.ok) {
+  throw new Error(data.error || "Analysis failed.");
+}
 
       setResult(data);
     } catch (err) {
