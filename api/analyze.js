@@ -3,7 +3,7 @@ import pdf from "pdf-parse";
 import mammoth from "mammoth";
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: payschedulevalidator,
 });
 
 const SYSTEM_PROMPT = `You are a CalSTRS AB 1997 pay schedule compliance reviewer for California charter schools.
